@@ -6,6 +6,7 @@ from typing import Optional
 
 
 class Product(BaseModel):
+    """Product with pricing metadata."""
     id:           UUID    = Field(default_factory=uuid4)
     ean_code:     str
     sku_name:     str
@@ -13,13 +14,14 @@ class Product(BaseModel):
     description:  str
     category:     str
     cur_price:    Decimal
-    max_traffic:  int               # upper traffic ceiling — used as 100% in multiplier calc
-    curr_traffic: int = 0           # live visitor count
+    max_traffic:  int           # Used to calibrate multiplier thresholds
+    curr_traffic: int = 0       # Current visitor count
 
     model_config = {"from_attributes": True}
 
 
 class ProductUpdate(BaseModel):
+    """Partial product update."""
     ean_code:     Optional[str]     = None
     sku_name:     Optional[str]     = None
     seller_name:  Optional[str]     = None
@@ -30,6 +32,7 @@ class ProductUpdate(BaseModel):
 
 
 class TrafficEvent(BaseModel):
+    """A user traffic signal."""
     product_id:  UUID
     visitor_id:  UUID = Field(default_factory=uuid4)
     event_type:  str  = "page_view"   # page_view | cart_add | checkout
@@ -37,6 +40,7 @@ class TrafficEvent(BaseModel):
 
 
 class PriceResponse(BaseModel):
+    """Current price with metrics."""
     product_id:   UUID
     sku_name:     str
     ean_code:     str
@@ -50,6 +54,7 @@ class PriceResponse(BaseModel):
 
 
 class PriceHistory(BaseModel):
+    """Historical price record."""
     product_id:   UUID
     effective_at: datetime
     base_price:   float
@@ -58,6 +63,7 @@ class PriceHistory(BaseModel):
 
 
 class HealthResponse(BaseModel):
+    """Health check response."""
     status:  str
     scylla:  str
     version: str = "1.0.0"

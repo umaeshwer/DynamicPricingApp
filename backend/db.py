@@ -1,8 +1,8 @@
 """
-db.py — ScyllaDB connection and all prepared statements.
+Database layer for ScyllaDB.
 
-All queries use prepared statements compiled once at startup for
-maximum throughput with ScyllaDB's Cassandra-compatible driver.
+Uses prepared statements for performance and sharded writes for horizontal scaling.
+Traffic counters are spread across 10 shards per product to avoid hot partitions.
 """
 
 from cassandra.cluster import Cluster
@@ -20,14 +20,14 @@ logger = logging.getLogger(__name__)
 # ── Sharding config ──────────────────────────────────────────────────────────
 TRAFFIC_SHARDS = 10  # Number of shards for distributed writes (0-9)
 
-# ── Connection config (override via environment variables) ──────────────────
+# Config from environment, with sensible defaults
 SCYLLA_HOSTS = os.getenv("SCYLLA_HOSTS", "127.0.0.1").split(",")
 SCYLLA_USER  = os.getenv("SCYLLA_USER",  "cassandra")
 SCYLLA_PASS  = os.getenv("SCYLLA_PASS",  "cassandra")
 SCYLLA_DC    = os.getenv("SCYLLA_DC",    "datacenter1")
 KEYSPACE     = "pricing"
 
-# ── Cluster setup ───────────────────────────────────────────────────────────
+# Initialize connection
 auth_provider = PlainTextAuthProvider(username=SCYLLA_USER, password=SCYLLA_PASS)
 
 cluster = Cluster(
@@ -42,9 +42,10 @@ cluster = Cluster(
 session = cluster.connect(KEYSPACE)
 session.default_consistency_level = ConsistencyLevel.LOCAL_ONE
 
-logger.info("ScyllaDB session established — hosts: %s", SCYLLA_HOSTS)
+logger.info("Connected to ScyllaDB: %s", SCYLLA_HOSTS)
 
-# ── Prepared statements ─────────────────────────────────────────────────────
+# Prepared statements
+# (These are compiled once at startup for better performance)─────────────
 
 _INSERT_PRODUCT = session.prepare("""
     INSERT INTO product
@@ -110,7 +111,7 @@ _GET_PRICE_HISTORY = session.prepare("""
     FROM prices WHERE product_id = ? ORDER BY effective_at DESC LIMIT ?
 """)
 
-# ── Public API ───────────────────────────────────────────────────────────────
+# ── Database API ────────────────────────────────────────────────────────────
 
 def upsert_product(p) -> None:
     session.execute(_INSERT_PRODUCT, (
@@ -157,10 +158,12 @@ def list_products():
 
 
 def update_product_fields(product_id, update):
-    """Apply a partial update — fetch current row first to fill gaps."""
+    """Partial update. Fetches current values for missing fields."""
     row = get_product(product_id)
     if not row:
         return None
+    
+    # Use provided value or fall back to existing
     session.execute(_UPDATE_PRODUCT_FIELDS, (
         update.ean_code     or row.ean_code,
         update.sku_name     or row.sku_name,
@@ -175,12 +178,12 @@ def update_product_fields(product_id, update):
 
 
 def _select_traffic_shard(product_id: UUID) -> int:
-    """Deterministically select a shard for this product_id using hash."""
+    """Which shard for this product. Hash-based, deterministic."""
     return hash(str(product_id)) % TRAFFIC_SHARDS
 
 
 def _get_total_traffic(product_id: UUID) -> int:
-    """Aggregate traffic from all shards for a product."""
+    """Sum all traffic shards (for accuracy on multi-node clusters)."""
     total = 0
     for shard in range(TRAFFIC_SHARDS):
         row = session.execute(_GET_TRAFFIC_SHARD, (product_id, shard)).one()
@@ -190,11 +193,10 @@ def _get_total_traffic(product_id: UUID) -> int:
 
 
 def update_traffic_and_price(product_id: UUID, curr_traffic: int, cur_price) -> None:
-    """Update traffic (sharded) and price (non-sharded)."""
-    # Write to a single shard (consistent for this product_id)
+    """Update traffic (to a sharded write) and price (in main table)."""
+    # Consistently route to same shard for this product
     shard = _select_traffic_shard(product_id)
     session.execute(_UPDATE_TRAFFIC_SHARD, (curr_traffic, product_id, shard))
-    # Update price in main product table
     session.execute(_UPDATE_PRODUCT_PRICE, (cur_price, product_id))
 
 
@@ -207,6 +209,7 @@ def record_traffic_event(product_id, visitor_id, event_type: str, page_views: in
 
 
 def record_price(product_id, base_price: float, multiplier: float, final_price: float) -> None:
+    """Store a price snapshot for audit trail."""
     session.execute(_INSERT_PRICE, (
         product_id,
         datetime.now(timezone.utc),

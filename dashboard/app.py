@@ -1,13 +1,8 @@
 """
-app.py — Streamlit dashboard for the Dynamic Pricing Monitor.
+Web UI for monitoring dynamic prices.
 
-Sections
---------
-1. Sidebar    — product selector, traffic simulator
-2. KPI row    — live metrics (price, multiplier, traffic, zone)
-3. Price chart — multiplier trend from price history
-4. Product table — all products with live prices
-5. Raw event log — last N traffic events (auto-refresh)
+Shows live pricing updates, traffic signals, and lets you simulate
+traffic events to see the pricing engine in action.
 """
 
 import os
@@ -19,8 +14,8 @@ import pandas as pd
 import requests
 import streamlit as st
 
-# ── Config ───────────────────────────────────────────────────────────────────
-API_URL       = os.getenv("API_URL", "http://api:8000")  # Use Docker service name by default
+# Config
+API_URL       = os.getenv("API_URL", "http://api:8000")
 REFRESH_SECS  = 5
 HISTORY_LIMIT = 100
 
@@ -30,8 +25,7 @@ st.set_page_config(
     layout="wide",
 )
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
-
+# Helpers for API calls
 def api_get(path: str):
     try:
         r = requests.get(f"{API_URL}{path}", timeout=5)
@@ -53,15 +47,15 @@ def api_post(path: str, payload: dict):
 
 
 def zone_badge(zone: str) -> str:
+    """Pretty icon for pricing zone."""
     icons = {"discount": "🟢 Discount", "neutral": "🟡 Neutral", "surge": "🔴 Surge"}
     return icons.get(zone, zone)
 
 
-# ── Page header ───────────────────────────────────────────────────────────────
+# Page header
 st.title("📈 Dynamic Pricing Monitor")
-st.caption(f"Auto-refreshes every {REFRESH_SECS}s · Powered by FastAPI + ScyllaDB")
+st.caption(f"Live monitor • Updates every {REFRESH_SECS}s")
 
-# ── Fetch all products ────────────────────────────────────────────────────────
 products = api_get("/products") or []
 product_map = {p["sku_name"]: p for p in products}
 
@@ -106,6 +100,7 @@ if not products:
 selected_name = st.selectbox("Select Product", list(product_map.keys()))
 
 # ── Main content ──────────────────────────────────────────────────────────────
+
 if selected_name:
     selected = product_map[selected_name]
     pid      = selected["id"]
@@ -113,8 +108,7 @@ if selected_name:
     price_data = api_get(f"/price/{pid}")
     history    = api_get(f"/price/{pid}/history?limit={HISTORY_LIMIT}") or []
 
-    # KPI row
-    st.subheader(f"📦 {selected_name}")
+    # KPIs
     c1, c2, c3, c4, c5 = st.columns(5)
 
     if price_data:
@@ -190,10 +184,9 @@ if selected_name:
                 )
                 st.rerun()
 
-st.divider()
-
 # All products table
-st.subheader("🗂 All Products — Live Prices")
+st.divider()
+st.subheader("🗂 All Products")
 rows = []
 for p in products:
     pr = api_get(f"/price/{p['id']}")

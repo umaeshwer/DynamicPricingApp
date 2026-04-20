@@ -1,124 +1,120 @@
-# Dynamic Pricing Application
+# Dynamic Pricing Engine
 
-Real-time pricing engine that adjusts product prices proportionally to web traffic, built with **FastAPI**, **ScyllaDB**, and **Streamlit**.
+Real-time price adjustments based on live traffic. Built with FastAPI, ScyllaDB, and Streamlit.
 
-## Architecture
+## How It Works
 
-```
-Frontend App
-     │  POST /traffic-event
-     ▼
-FastAPI (backend/)
-     │  reads/writes via prepared statements
-     ▼
-ScyllaDB  ──── tables: product, traffic_events, prices
-     ▲
-     │  reads live prices
-Streamlit Dashboard (dashboard/)
-```
-
-## Project Structure
+When users interact with products, traffic signals flow into the system, which adjusts prices in real-time:
 
 ```
-dynamic-pricing/
-├── schema.cql                # ScyllaDB keyspace + tables
-├── requirements.txt
-├── docker-compose.yml        # ScyllaDB + API + Dashboard
-├── Dockerfile.api
-├── Dockerfile.dashboard
-├── backend/
-│   ├── main.py               # FastAPI routes
-│   ├── db.py                 # ScyllaDB session + prepared statements
-│   ├── pricing.py            # Multiplier engine
-│   └── models.py             # Pydantic schemas
-├── dashboard/
-│   └── app.py                # Streamlit monitor
-└── scripts/
-    ├── seed.py               # Populate sample products
-    └── load_test.py          # Simulate bursty traffic
+User interactions  →  FastAPI  →  ScyllaDB  →  Dashboard
+(page views,           (computes    (stores       (live
+ cart adds,             prices)     events)      monitoring)
+checkouts)
 ```
 
-## Quickstart (Docker)
+## Files
+
+```
+.
+├── backend/           # FastAPI server
+│  ├── main.py
+│  ├── db.py          # Database layer (sharded writes)
+│  ├── pricing.py     # Multiplier math
+│  └── models.py
+├── dashboard/        # Streamlit UI
+├── scripts/          # Utilities
+│  ├── seed.py
+│  └── load_test.py
+├── schema.cql        # ScyllaDB setup
+└── docker-compose.yml
+```
+
+## Quick Start
+
+**With Docker:**
 
 ```bash
-# 1. Start everything
+# Start everything
 docker compose up --build
 
-# 2. Seed sample products (wait ~20s for ScyllaDB to be ready)
+# In another terminal, seed sample products
 python scripts/seed.py
 
-# 3. Open the dashboard
+# Open dashboard
 open http://localhost:8501
-
-# 4. API docs
-open http://localhost:8000/docs
 ```
 
-## Quickstart (Local)
+**Without Docker:**
 
 ```bash
-# 1. Start ScyllaDB
+# Start ScyllaDB
 docker run -d --name scylla -p 9042:9042 scylladb/scylla \
   --smp 1 --memory 750M --overprovisioned 1
 
-# 2. Wait ~30s then apply schema
+# Wait 30s for ScyllaDB to start, then
 cqlsh 127.0.0.1 -f schema.cql
 
-# 3. Install dependencies
+# Backend
 pip install -r requirements.txt
-
-# 4. Start FastAPI
 uvicorn backend.main:app --reload --port 8000
 
-# 5. Start Streamlit (new terminal)
+# Dashboard (new terminal)
 streamlit run dashboard/app.py
 
-# 6. Seed products
+# Seed data
 python scripts/seed.py
 ```
 
-## API Reference
+## API Endpoints
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/products` | Register a new product |
+| Method | Path | What It Does |
+|--------|------|-------------|
+| POST | `/products` | Create a product |
 | GET | `/products` | List all products |
-| GET | `/products/{id}` | Get a single product |
-| PATCH | `/products/{id}` | Update product fields |
-| POST | `/traffic-event` | Record traffic + recompute price |
+| GET | `/products/{id}` | Get one product |
+| PATCH | `/products/{id}` | Update a product |
+| POST | `/traffic-event` | Record traffic + recalc price |
 | GET | `/price/{id}` | Get current price |
-| GET | `/price/{id}/history` | Price history (last N records) |
+| GET | `/price/{id}/history` | Price history |
 | GET | `/health` | Health check |
 
-## Pricing Logic
+API docs available at `http://localhost:8000/docs`
 
-Each product has a `max_traffic` ceiling. The multiplier is computed as:
+## Pricing
 
-```
-traffic_ratio = curr_traffic / max_traffic
+Prices adjust based on traffic volume relative to a product's `max_traffic` ceiling:
 
-ratio 0.00–0.30  →  discount zone   (0.85× → 1.00×)
-ratio 0.30–0.70  →  neutral zone    (1.00×)
-ratio 0.70–1.00  →  surge zone      (1.00× → 2.00×)
-```
+- **Low traffic (0–30%)**: discount zone, prices drop (0.85x–1.0x)
+- **Medium traffic (30–70%)**: neutral zone, prices stay near base (1.0x)
+- **High traffic (70%+)**: surge zone, prices climb (1.0x–2.0x)
 
-Event-type weights (cart_add and checkout events accelerate surges):
-- `page_view`  → 1.0×
-- `cart_add`   → 2.5×
-- `checkout`   → 4.0×
+Different event types have different weights:
+- `page_view`: 1.0x (baseline)
+- `cart_add`: 2.5x (buyer signal)
+- `checkout`: 4.0x (strongest signal)
 
-## Environment Variables
+So one checkout event has 4× more impact than a page view on pricing.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SCYLLA_HOSTS` | `127.0.0.1` | Comma-separated ScyllaDB hosts |
-| `SCYLLA_USER` | `cassandra` | ScyllaDB username |
-| `SCYLLA_PASS` | `cassandra` | ScyllaDB password |
-| `SCYLLA_DC` | `datacenter1` | Local datacenter name |
+## Database Optimization
 
-## Load Testing
+Product traffic updates are **sharded** across 10 partitions per product to avoid write bottlenecks on hot items. This lets the system handle thousands of traffic events per second per product.
+
+## Config
+
+Set via environment variables:
+
+| Variable | Default | Purpose |
+|----------|---------|----------|
+| `SCYLLA_HOSTS` | `127.0.0.1` | ScyllaDB hosts (comma-separated) |
+| `SCYLLA_USER` | `cassandra` | Username |
+| `SCYLLA_PASS` | `cassandra` | Password |
+| `SCYLLA_DC` | `datacenter1` | Datacenter name |
+| `API_URL` | `http://api:8000` | Backend URL (for dashboard) |
+
+## Testing
 
 ```bash
-# 20 requests/sec for 60 seconds
+# Simulate traffic
 python scripts/load_test.py --rps 20 --duration 60
 ```

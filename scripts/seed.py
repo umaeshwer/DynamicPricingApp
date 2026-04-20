@@ -1,8 +1,8 @@
 """
-seed.py — Populate ScyllaDB with sample products for development/testing.
+Populate the database with sample products.
 
 Usage:
-    python scripts/seed.py
+  python scripts/seed.py
 """
 
 import requests

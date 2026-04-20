@@ -1,16 +1,8 @@
 """
-main.py — FastAPI application for the dynamic pricing service.
+FastAPI backend for dynamic pricing engine.
 
-Endpoints
----------
-POST   /products                    Register a new product
-GET    /products                    List all products
-GET    /products/{id}               Get a single product
-PATCH  /products/{id}               Partially update a product
-POST   /traffic-event               Record a traffic event & recompute price
-GET    /price/{id}                  Get the current price for a product
-GET    /price/{id}/history          Get the last N price records
-GET    /health                      Health check (includes ScyllaDB ping)
+Handles product management and real-time pricing updates based on traffic signals.
+Writes are sharded for horizontal scaling on high-traffic products.
 """
 
 import logging
@@ -37,13 +29,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-# ── App lifecycle ────────────────────────────────────────────────────────────
-
+# Cleanup on shutdown
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Dynamic Pricing API starting up")
+    logger.info("Starting up")
     yield
-    logger.info("Shutting down — closing ScyllaDB cluster")
+    logger.info("Closing DB connection")
     db.cluster.shutdown()
 
 
@@ -62,11 +53,9 @@ app.add_middleware(
 )
 
 
-# ── Product endpoints ────────────────────────────────────────────────────────
-
 @app.post("/products", response_model=Product, status_code=201, tags=["Products"])
 async def create_product(product: Product):
-    """Register a new product. `max_traffic` sets the surge ceiling for this SKU."""
+    """Create a new product. max_traffic is used to calibrate the pricing multiplier."""
     db.upsert_product(product)
     # Insert initial price record with 1.0x multiplier (neutral zone)
     db.record_price(
@@ -81,14 +70,14 @@ async def create_product(product: Product):
 
 @app.get("/products", response_model=List[Product], tags=["Products"])
 async def list_products():
-    """List all registered products."""
+    """Get all products."""
     rows = db.list_products()
     return [Product(**row._asdict()) for row in rows]
 
 
 @app.get("/products/{product_id}", response_model=Product, tags=["Products"])
 async def get_product(product_id: UUID):
-    """Fetch a single product by its UUID."""
+    """Get a product by ID."""
     row = db.get_product(product_id)
     if not row:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -97,26 +86,19 @@ async def get_product(product_id: UUID):
 
 @app.patch("/products/{product_id}", response_model=Product, tags=["Products"])
 async def update_product(product_id: UUID, update: ProductUpdate):
-    """Partially update product metadata (e.g. adjust max_traffic or base price)."""
+    """Update product fields."""
     row = db.update_product_fields(product_id, update)
     if not row:
         raise HTTPException(status_code=404, detail="Product not found")
     return Product(**row._asdict())
 
 
-# ── Traffic & pricing endpoints ──────────────────────────────────────────────
-
 @app.post("/traffic-event", response_model=PriceResponse, tags=["Pricing"])
 async def record_traffic_event(event: TrafficEvent):
-    """
-    Called by the frontend on each meaningful user interaction.
-
-    Flow:
-      1. Load product from ScyllaDB
-      2. Apply event-type weight to page_views and add to curr_traffic
-      3. Run pricing engine → new multiplier & final_price
-      4. Persist raw event, updated traffic, updated price
-      5. Return the new PriceResponse
+    """Record a traffic event and recompute pricing.
+    
+    Different event types (page_view, cart_add, checkout) have different weights
+    to reflect purchase intent. Updates are sharded for write performance.
     """
     row = db.get_product(event.product_id)
     if not row:
@@ -161,7 +143,7 @@ async def record_traffic_event(event: TrafficEvent):
 
 @app.get("/price/{product_id}", response_model=PriceResponse, tags=["Pricing"])
 async def get_current_price(product_id: UUID):
-    """Return the current (latest) price for a product."""
+    """Get the current price of a product."""
     row = db.get_product(product_id)
     if not row:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -202,7 +184,7 @@ async def get_price_history(
     product_id: UUID,
     limit: int = Query(default=50, ge=1, le=500),
 ):
-    """Return the last N price records for a product (newest first)."""
+    """Get price history for a product."""
     rows = db.get_price_history(product_id, limit)
     if not rows:
         raise HTTPException(status_code=404, detail="No price history found")
