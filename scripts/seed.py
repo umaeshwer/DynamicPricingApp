@@ -13,7 +13,7 @@ API_URL = "http://localhost:8000"
 SAMPLE_PRODUCTS = [
     {
         "id":          str(uuid4()),
-        "sku_name":    "Pro Subscription",
+        "sku_name":    "iPhone 17",
         "ean_code":    "5901234123457",
         "seller_name": "Acme Corp",
         "category":    "SaaS",
@@ -24,7 +24,7 @@ SAMPLE_PRODUCTS = [
     },
     {
         "id":          str(uuid4()),
-        "sku_name":    "Team Plan (5 seats)",
+        "sku_name":    "GoPro Hero 11",
         "ean_code":    "5901234123458",
         "seller_name": "Acme Corp",
         "category":    "SaaS",
@@ -35,7 +35,7 @@ SAMPLE_PRODUCTS = [
     },
     {
         "id":          str(uuid4()),
-        "sku_name":    "Enterprise Add-on",
+        "sku_name":    "Rayban Smart Glasses",
         "ean_code":    "5901234123459",
         "seller_name": "Acme Corp",
         "category":    "SaaS",
@@ -46,7 +46,7 @@ SAMPLE_PRODUCTS = [
     },
     {
         "id":          str(uuid4()),
-        "sku_name":    "API Credits Pack",
+        "sku_name":    "Razr Laptop 2024",
         "ean_code":    "5901234123460",
         "seller_name": "Acme Corp",
         "category":    "Add-ons",
@@ -57,7 +57,7 @@ SAMPLE_PRODUCTS = [
     },
     {
         "id":          str(uuid4()),
-        "sku_name":    "Storage Upgrade 1TB",
+        "sku_name":    "Sony WH-1000XM5",
         "ean_code":    "5901234123461",
         "seller_name": "Acme Corp",
         "category":    "Add-ons",
